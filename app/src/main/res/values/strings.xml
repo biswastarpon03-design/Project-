@@ -84,6 +84,18 @@
     <string name="sign_in_google">Sign in with Google</string>
     <string name="sign_out">Sign out</string>
     <string name="cd_sign_out">Sign out of Google account</string>
+    <string name="auth_error_cancelled">Google Sign-In was cancelled or rejected by Google Play Services. If this happened after choosing an account, verify the app signing certificate (SHA-1) in Firebase.</string>
+    <string name="auth_error_no_credential">No eligible Google account found on this device. Add a Google account in device Settings and try again.</string>
+    <string name="auth_error_provider_config">Google Sign-In is unavailable or misconfigured on this device.</string>
+    <string name="auth_error_network">Network error during Google Sign-In. Check your internet connection and try again.</string>
+    <string name="auth_error_invalid_credential">Google sign-in token expired or was invalid. Please try again.</string>
+    <string name="auth_error_user_disabled">This account has been disabled. Contact support for help.</string>
+    <string name="auth_error_account_conflict">An account already exists with this email using a different sign-in method.</string>
+    <string name="auth_error_operation_not_allowed">Google Sign-In is not enabled for this Firebase project.</string>
+    <string name="auth_error_missing_web_client_id">Google Sign-In configuration missing (default_web_client_id).</string>
+    <string name="auth_error_unexpected_credential">Sign-in failed: received an unexpected credential type.</string>
+    <string name="auth_error_generic">Google Sign-In failed: %1$s</string>
+    <string name="action_retry">Retry</string>
 
     <string name="badge_question">Question</string>
     <string name="badge_answered_count">%1$d answered</string>
