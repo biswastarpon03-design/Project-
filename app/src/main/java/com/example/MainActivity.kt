@@ -128,7 +128,11 @@ private fun AuthenticatedProjectPiApp(currentUserId: String) {
     onDismissDetails = viewModel::dismissChannelDetails,
     onSignOut = {
       viewModel.setForeground(false)
-      signOutUser(credentialManager = credentialManager, scope = scope)
+      signOutUser(
+        credentialManager = credentialManager,
+        scope = scope,
+        context = context.applicationContext,
+      )
     },
   )
 }
