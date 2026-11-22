@@ -2,7 +2,6 @@ package com.example.ui
 
 import android.app.Activity
 import android.content.Context
-import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
@@ -11,11 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -24,6 +24,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +53,8 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
+import com.example.data.AuthFlowStage
+import com.example.data.FirebaseAuthErrorHandler
 import com.example.model.ChannelPlatform
 import com.example.ui.components.PlatformGlyphIcon
 import com.example.ui.components.platformAccentFor
@@ -69,10 +75,12 @@ import kotlinx.coroutines.withContext
 fun AuthScreen(
   onAuthSuccess: () -> Unit,
   modifier: Modifier = Modifier,
+  errorHandler: FirebaseAuthErrorHandler = FirebaseAuthErrorHandler.default,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val credentialManager = remember(context) { CredentialManager.create(context) }
+  val snackbarHostState = remember { SnackbarHostState() }
 
   var isLoading by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -84,15 +92,23 @@ fun AuthScreen(
       onAuthSuccess = onAuthSuccess,
       onUnauthenticated = {},
       scope = scope,
+      errorHandler = errorHandler,
     )
   }
 
-  Surface(
+  Scaffold(
     modifier = modifier.fillMaxSize(),
-    color = MaterialTheme.colorScheme.background,
-  ) {
+    containerColor = MaterialTheme.colorScheme.background,
+    contentWindowInsets = WindowInsets.safeDrawing,
+    snackbarHost = {
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.testTag("auth_snackbar_host"),
+      )
+    },
+  ) { innerPadding ->
     Box(
-      modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
+      modifier = Modifier.fillMaxSize().padding(innerPadding).padding(24.dp),
       contentAlignment = Alignment.Center,
     ) {
       Surface(
@@ -165,7 +181,7 @@ fun AuthScreen(
             Surface(
               shape = MaterialTheme.shapes.small,
               color = MaterialTheme.colorScheme.errorContainer,
-              modifier = Modifier.fillMaxWidth(),
+              modifier = Modifier.fillMaxWidth().testTag("auth_error_banner"),
             ) {
               Text(
                 text = errorMessage.orEmpty(),
@@ -192,7 +208,12 @@ fun AuthScreen(
                   errorMessage = msg
                 },
                 scope = scope,
-                onAuthCancelled = { isLoading = false },
+                onAuthCancelled = { msg ->
+                  isLoading = false
+                  errorMessage = msg
+                },
+                snackbarHostState = snackbarHostState,
+                errorHandler = errorHandler,
               )
             },
             enabled = !isLoading,
@@ -225,6 +246,7 @@ fun attemptAutoSignIn(
   onAuthSuccess: () -> Unit,
   onUnauthenticated: () -> Unit,
   scope: CoroutineScope,
+  errorHandler: FirebaseAuthErrorHandler = FirebaseAuthErrorHandler.default,
 ) {
   if (Firebase.auth.currentUser != null) {
     onAuthSuccess()
@@ -233,7 +255,12 @@ fun attemptAutoSignIn(
   val clientId =
     try {
       context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      errorHandler.handleAuthError(
+        context = context,
+        exception = e,
+        stage = AuthFlowStage.SILENT_AUTO_SIGN_IN,
+      )
       onUnauthenticated()
       return
     }
@@ -254,7 +281,12 @@ fun attemptAutoSignIn(
       } else {
         onUnauthenticated()
       }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      errorHandler.handleAuthError(
+        context = context,
+        exception = e,
+        stage = AuthFlowStage.SILENT_AUTO_SIGN_IN,
+      )
       onUnauthenticated()
     }
   }
@@ -266,18 +298,38 @@ fun onGoogleSignInClicked(
   onAuthSuccess: () -> Unit,
   onAuthError: (String) -> Unit,
   scope: CoroutineScope,
-  onAuthCancelled: () -> Unit = {},
+  onAuthCancelled: (String) -> Unit = {},
+  snackbarHostState: SnackbarHostState? = null,
+  errorHandler: FirebaseAuthErrorHandler = FirebaseAuthErrorHandler.default,
 ) {
   val clientId =
     try {
       context.getString(R.string.default_web_client_id)
     } catch (_: Exception) {
-      onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+      val result =
+        errorHandler.handleConfigurationError(
+          context = context,
+          stage = AuthFlowStage.INTERACTIVE_SIGN_IN,
+          errorCode = "MISSING_DEFAULT_WEB_CLIENT_ID",
+          userMessage = context.getString(R.string.auth_error_missing_web_client_id),
+          detail = "R.string.default_web_client_id could not be resolved from google-services.json",
+        )
+      onAuthError(result.userMessage)
+      if (snackbarHostState != null) {
+        scope.launch {
+          snackbarHostState.showSnackbar(
+            message = result.userMessage,
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+          )
+        }
+      }
       return
     }
   val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
   val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
   scope.launch {
+    var stage = AuthFlowStage.INTERACTIVE_SIGN_IN
     try {
       val activityContext = context as? Activity
       val cred =
@@ -287,18 +339,52 @@ fun onGoogleSignInClicked(
           credentialManager.getCredential(context, request).credential
         }
       if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+        stage = AuthFlowStage.FIREBASE_CREDENTIAL_EXCHANGE
         val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
         Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
         onAuthSuccess()
       } else {
-        onAuthError("Unexpected credential type")
+        val result =
+          errorHandler.handleConfigurationError(
+            context = context,
+            stage = stage,
+            errorCode = "UNEXPECTED_CREDENTIAL_TYPE",
+            userMessage = context.getString(R.string.auth_error_unexpected_credential),
+            detail = "Credential class=${cred::class.java.name}, type=${cred.type}",
+          )
+        onAuthError(result.userMessage)
+        snackbarHostState?.showSnackbar(
+          message = result.userMessage,
+          withDismissAction = true,
+          duration = SnackbarDuration.Long,
+        )
       }
     } catch (e: GetCredentialCancellationException) {
-      Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
-      onAuthCancelled()
+      val result =
+        if (snackbarHostState != null) {
+          errorHandler.handleAndShowSnackbar(
+            context = context,
+            snackbarHostState = snackbarHostState,
+            exception = e,
+            stage = stage,
+          )
+        } else {
+          errorHandler.handleAuthError(context = context, exception = e, stage = stage)
+        }
+      onAuthCancelled(result.userMessage)
     } catch (e: Exception) {
-      Log.e("Auth", "Google Sign-In failed", e)
-      onAuthError(e.localizedMessage ?: "Sign in failed")
+      val result =
+        if (snackbarHostState != null) {
+          errorHandler.handleAndShowSnackbar(
+            context = context,
+            snackbarHostState = snackbarHostState,
+            exception = e,
+            stage = stage,
+          )
+        } else {
+          errorHandler.handleAuthError(context = context, exception = e, stage = stage)
+        }
+      onAuthError(result.userMessage)
     }
   }
 }
@@ -306,6 +392,8 @@ fun onGoogleSignInClicked(
 fun signOutUser(
   credentialManager: CredentialManager,
   scope: CoroutineScope,
+  context: Context? = null,
+  errorHandler: FirebaseAuthErrorHandler = FirebaseAuthErrorHandler.default,
   onSignOutComplete: () -> Unit = {},
 ) {
   scope.launch {
@@ -313,7 +401,13 @@ fun signOutUser(
       try {
         credentialManager.clearCredentialState(ClearCredentialStateRequest())
       } catch (e: Exception) {
-        Log.w("Auth", "Failed to clear credential state: ${e.message}")
+        if (context != null) {
+          errorHandler.handleAuthError(
+            context = context,
+            exception = e,
+            stage = AuthFlowStage.SIGN_OUT,
+          )
+        }
       } finally {
         Firebase.auth.signOut()
         onSignOutComplete()
